@@ -1,0 +1,366 @@
+import React, { useState, useEffect } from 'react';
+import { Search, Download, ArrowLeft, Loader2, Video, Music, Youtube, AlertCircle } from 'lucide-react';
+
+// Utility to extract YouTube Video ID from various URL formats
+const extractVideoId = (url) => {
+  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
+  const match = url.match(regExp);
+  return (match && match[2].length === 11) ? match[2] : null;
+};
+
+// Invidious API instances (using a reliable public instance for CORS)
+const API_BASE = 'https://invidious.jing.rocks/api/v1';
+
+export default function App() {
+  // State Management
+  const [view, setView] = useState('home'); // 'home', 'results', 'download'
+  const [query, setQuery] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [results, setResults] = useState([]);
+  const [error, setError] = useState('');
+  
+  // Download State
+  const [selectedVideo, setSelectedVideo] = useState(null);
+  const [format, setFormat] = useState('mp4');
+  const [quality, setQuality] = useState('1080p');
+
+  const handleInputSubmit = async (e) => {
+    if (e.key === 'Enter' || e.type === 'click') {
+      const input = query.trim();
+      if (!input) return;
+
+      setError('');
+      
+      // Check if the input is a direct YouTube link
+      const videoId = extractVideoId(input);
+      
+      if (videoId) {
+        // It's a link! Jump straight to download mode
+        setIsLoading(true);
+        try {
+          // Fetch basic video info to display title/thumbnail
+          const res = await fetch(`${API_BASE}/videos/${videoId}`);
+          if (!res.ok) throw new Error("Could not fetch video info");
+          const data = await res.json();
+          setSelectedVideo({
+            videoId: videoId,
+            title: data.title,
+            author: data.author,
+            videoThumbnails: data.videoThumbnails
+          });
+          setView('download');
+        } catch (err) {
+          setError('Failed to load video information. Please check the link.');
+        } finally {
+          setIsLoading(false);
+        }
+      } else {
+        // It's a search query! Fetch results
+        executeSearch(input);
+      }
+    }
+  };
+
+  const executeSearch = async (searchQuery) => {
+    setIsLoading(true);
+    setView('results');
+    try {
+      // Append creative commons to filter for free-to-use downloadable content
+      // Sort by upload_date for newest videos as requested
+      const safeQuery = encodeURIComponent(`${searchQuery} "creative commons"`);
+      const res = await fetch(`${API_BASE}/search?q=${safeQuery}&sort_by=upload_date`);
+      
+      if (!res.ok) throw new Error("Search failed. The API might be rate-limited.");
+      
+      const data = await res.json();
+      setResults(data.filter(item => item.type === 'video'));
+    } catch (err) {
+      setError(err.message || 'An error occurred while searching.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const goToDownload = (video) => {
+    setSelectedVideo(video);
+    setView('download');
+  };
+
+  const goBack = () => {
+    if (view === 'download' && results.length > 0 && !extractVideoId(query)) {
+      setView('results');
+    } else {
+      setView('home');
+      setQuery('');
+      setResults([]);
+    }
+    setError('');
+  };
+
+  const renderHome = () => (
+    <div className="flex flex-col items-center justify-center min-h-[80vh] w-full max-w-3xl mx-auto px-4 text-center animate-in fade-in zoom-in duration-500">
+      <h1 className="text-7xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-500 mb-8 tracking-tight">
+        Hi
+      </h1>
+      <p className="text-slate-400 mb-8 text-lg">
+        Paste a YouTube link to download immediately, or search for free-to-use videos.
+      </p>
+      
+      <div className="relative w-full group">
+        <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+          <Search className="h-6 w-6 text-slate-500 group-focus-within:text-indigo-400 transition-colors" />
+        </div>
+        <input
+          type="text"
+          className="w-full bg-slate-900/50 border-2 border-slate-800 focus:border-indigo-500 rounded-2xl py-5 pl-14 pr-16 text-lg text-slate-100 placeholder-slate-500 shadow-xl backdrop-blur-sm outline-none transition-all"
+          placeholder="Search (e.g. roblox fisch) or paste link..."
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={handleInputSubmit}
+        />
+        <button 
+          onClick={handleInputSubmit}
+          className="absolute inset-y-2 right-2 px-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-medium transition-colors flex items-center gap-2"
+        >
+          {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Go'}
+        </button>
+      </div>
+
+      {error && (
+        <div className="mt-6 flex items-center gap-2 text-red-400 bg-red-400/10 px-4 py-3 rounded-lg">
+          <AlertCircle className="w-5 h-5" />
+          <span>{error}</span>
+        </div>
+      )}
+    </div>
+  );
+
+  const renderResults = () => (
+    <div className="w-full max-w-6xl mx-auto px-4 py-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="flex items-center gap-4 mb-8">
+        <button 
+          onClick={goBack}
+          className="p-2 hover:bg-slate-800 rounded-full transition-colors text-slate-400 hover:text-white"
+        >
+          <ArrowLeft className="w-6 h-6" />
+        </button>
+        <h2 className="text-2xl font-bold text-slate-100 flex-1">
+          Newest Free-to-Use Results for "{query}"
+        </h2>
+      </div>
+
+      {isLoading ? (
+        <div className="flex flex-col items-center justify-center py-20 text-slate-400">
+          <Loader2 className="w-12 h-12 animate-spin mb-4 text-indigo-500" />
+          <p>Searching YouTube...</p>
+        </div>
+      ) : error ? (
+        <div className="text-center py-20 text-red-400 bg-red-400/10 rounded-2xl border border-red-500/20">
+          <AlertCircle className="w-12 h-12 mx-auto mb-4" />
+          <p className="text-lg">{error}</p>
+        </div>
+      ) : results.length === 0 ? (
+        <div className="text-center py-20 text-slate-400 bg-slate-900/50 rounded-2xl border border-slate-800">
+          <Youtube className="w-12 h-12 mx-auto mb-4 opacity-50" />
+          <p className="text-lg">No results found. Try a different search term.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          {results.map((video) => (
+            <div 
+              key={video.videoId} 
+              onClick={() => goToDownload(video)}
+              className="bg-slate-900/60 border border-slate-800 rounded-2xl overflow-hidden hover:border-indigo-500/50 hover:shadow-[0_0_20px_rgba(99,102,241,0.15)] cursor-pointer transition-all group"
+            >
+              <div className="relative aspect-video overflow-hidden bg-slate-950">
+                <img 
+                  src={video.videoThumbnails?.[0]?.url || `https://img.youtube.com/vi/${video.videoId}/hqdefault.jpg`} 
+                  alt={video.title}
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                />
+                <div className="absolute inset-0 bg-black/20 group-hover:bg-transparent transition-colors" />
+                <div className="absolute bottom-2 right-2 bg-black/80 px-2 py-1 rounded-md text-xs font-mono text-white">
+                  {video.lengthSeconds ? new Date(video.lengthSeconds * 1000).toISOString().substr(14, 5) : '--:--'}
+                </div>
+              </div>
+              <div className="p-4">
+                <h3 className="text-slate-100 font-semibold line-clamp-2 mb-2 group-hover:text-indigo-300 transition-colors">
+                  {video.title}
+                </h3>
+                <div className="flex justify-between items-center text-sm text-slate-400">
+                  <span className="truncate pr-2">{video.author}</span>
+                  <span className="whitespace-nowrap">{video.publishedText}</span>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  const renderDownload = () => {
+    if (!selectedVideo) return null;
+
+    const thumbnailUrl = selectedVideo.videoThumbnails?.[selectedVideo.videoThumbnails.length - 1]?.url 
+      || `https://img.youtube.com/vi/${selectedVideo.videoId}/maxresdefault.jpg`;
+
+    return (
+      <div className="w-full max-w-4xl mx-auto px-4 py-8 animate-in fade-in slide-in-from-right-8 duration-500">
+        <button 
+          onClick={goBack}
+          className="flex items-center gap-2 mb-8 px-4 py-2 hover:bg-slate-800 rounded-xl transition-colors text-slate-400 hover:text-white w-fit"
+        >
+          <ArrowLeft className="w-5 h-5" />
+          <span>Back to Search</span>
+        </button>
+
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl">
+          <div className="md:flex">
+            {/* Video Info Side */}
+            <div className="md:w-1/2 p-6 md:p-8 flex flex-col justify-center border-b md:border-b-0 md:border-r border-slate-800">
+              <div className="aspect-video rounded-xl overflow-hidden mb-6 bg-black shadow-lg">
+                <img 
+                  src={thumbnailUrl} 
+                  alt={selectedVideo.title}
+                  className="w-full h-full object-cover"
+                />
+              </div>
+              <h2 className="text-2xl font-bold text-slate-100 mb-2 leading-tight">
+                {selectedVideo.title}
+              </h2>
+              <p className="text-slate-400 mb-6">
+                By {selectedVideo.author || 'Unknown Creator'}
+              </p>
+              
+              {/* Requirements: Format and Quality Selection */}
+              <div className="space-y-4 bg-slate-950/50 p-4 rounded-2xl">
+                <div>
+                  <label className="block text-sm font-medium text-slate-400 mb-2">Select Format</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => setFormat('mp4')}
+                      className={`flex items-center justify-center gap-2 py-3 px-4 rounded-xl font-medium transition-all ${
+                        format === 'mp4' 
+                          ? 'bg-indigo-600 text-white shadow-[0_0_15px_rgba(79,70,229,0.4)]' 
+                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      <Video className="w-5 h-5" />
+                      Video (MP4)
+                    </button>
+                    <button
+                      onClick={() => setFormat('mp3')}
+                      className={`flex items-center justify-center gap-2 py-3 px-4 rounded-xl font-medium transition-all ${
+                        format === 'mp3' 
+                          ? 'bg-purple-600 text-white shadow-[0_0_15px_rgba(147,51,234,0.4)]' 
+                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      <Music className="w-5 h-5" />
+                      Audio (MP3)
+                    </button>
+                  </div>
+                </div>
+
+                {format === 'mp4' && (
+                  <div className="animate-in fade-in slide-in-from-top-2">
+                    <label className="block text-sm font-medium text-slate-400 mb-2">Preferred Quality</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {['360p', '720p', '1080p'].map((q) => (
+                        <button
+                          key={q}
+                          onClick={() => setQuality(q)}
+                          className={`py-2 rounded-lg font-medium text-sm transition-all ${
+                            quality === q 
+                              ? 'bg-slate-700 text-white border border-slate-600' 
+                              : 'bg-slate-900 text-slate-400 border border-transparent hover:bg-slate-800'
+                          }`}
+                        >
+                          {q}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Download Execution Side (Iframe embed) */}
+            <div className="md:w-1/2 p-6 md:p-8 bg-slate-900/50 flex flex-col">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="p-3 bg-indigo-500/20 text-indigo-400 rounded-xl">
+                  <Download className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-semibold text-slate-100">Ready to Download</h3>
+                  <p className="text-sm text-slate-400">Powered by external service</p>
+                </div>
+              </div>
+
+              {/* 
+                We use the requested Vevioz iframe as the actual mechanism to bypass CORS/DRM client-side.
+                The URL changes dynamically based on the user's selected format (mp3 vs videos).
+              */}
+              <div className="flex-1 bg-slate-950 rounded-2xl border border-slate-800 overflow-hidden relative min-h-[300px] flex items-center justify-center">
+                 <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 z-0">
+                    <Loader2 className="w-8 h-8 animate-spin mb-2 opacity-50" />
+                    <span className="text-sm">Loading download secure widget...</span>
+                 </div>
+                 
+                 <iframe 
+                    key={`${selectedVideo.videoId}-${format}`} // Force reload when format changes
+                    src={`https://api.vevioz.com/@api/button/${format === 'mp3' ? 'mp3' : 'videos'}/${selectedVideo.videoId}`} 
+                    width="100%" 
+                    height="100%" 
+                    allowtransparency="true" 
+                    scrolling="no" 
+                    className="absolute inset-0 z-10 bg-transparent border-none"
+                    style={{ border: 'none' }}
+                    title="Download Widget"
+                 />
+              </div>
+              <p className="text-xs text-slate-500 mt-4 text-center">
+                * Quality options inside the widget may vary based on original video availability.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-950 font-sans selection:bg-indigo-500/30 text-slate-200">
+      {/* Background ambient light effects */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-indigo-900/20 blur-[120px]" />
+        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-purple-900/10 blur-[120px]" />
+      </div>
+
+      <main className="relative z-10 w-full h-full min-h-screen flex flex-col">
+        {/* Navigation Bar */}
+        <header className="w-full p-4 md:px-8 py-6 flex items-center justify-between border-b border-white/5 bg-slate-950/50 backdrop-blur-md sticky top-0 z-50">
+          <div 
+            className="flex items-center gap-2 cursor-pointer group"
+            onClick={() => { setView('home'); setQuery(''); }}
+          >
+            <div className="bg-indigo-600 p-2 rounded-xl group-hover:scale-105 transition-transform">
+              <Download className="w-5 h-5 text-white" />
+            </div>
+            <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 to-purple-400">
+              DownLoadr
+            </span>
+          </div>
+        </header>
+
+        {/* Dynamic View Rendering */}
+        <div className="flex-1 w-full">
+          {view === 'home' && renderHome()}
+          {view === 'results' && renderResults()}
+          {view === 'download' && renderDownload()}
+        </div>
+      </main>
+    </div>
+  );
+}
